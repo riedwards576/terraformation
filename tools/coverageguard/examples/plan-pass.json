@@ -1,0 +1,1 @@
+{"resource_changes":[{"address":"crowdstrike_sensor.new_laptop","change":{"actions":["create"],"after":{"host":"laptop-201"}},"type":"crowdstrike_sensor"},{"address":"jamf_managed_device.new_laptop","change":{"actions":["create"],"after":{"device":"laptop-201"}},"type":"jamf_managed_device"}]}

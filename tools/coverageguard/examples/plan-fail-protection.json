@@ -1,0 +1,1 @@
+{"resource_changes":[{"address":"crowdstrike_prevention_policy.standard","change":{"actions":["update"],"after":{"uninstall_protection":false}},"type":"crowdstrike_prevention_policy"}]}

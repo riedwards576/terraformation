@@ -9,6 +9,7 @@ Example workload is a secure-by-default S3 bucket — cheap enough to run at $0,
 ```
 PR ──▶ fmt · validate · tflint · Trivy · Checkov · OPA · plan ──▶ plan posted to PR
  │        + PlanGuard attest (hash + risk score)                     (no apply)
+ │        + CoverageGuard check (end-state coverage floor)
  └─ merge to main ──▶ PlanGuard verify ──▶ apply dev (auto) ──▶ apply prod (manual + reviewer)
 Nightly ──▶ plan -detailed-exitcode ──▶ drift issue if anything changed outside Terraform
 ```
@@ -35,6 +36,35 @@ Stdlib-only Python, 9 unit tests (`cd tools/planguard && python3 -m unittest tes
 no paid service, no server. See `tools/planguard/README.md` for the
 30-second interview story and its honest limits (attestation, not yet
 Sigstore signing — that's the stated next step).
+
+## Second novel piece: CoverageGuard
+
+PlanGuard proves the *plan* didn't change. CoverageGuard judges the
+*end state* — after this plan is applied, will fewer devices or users
+be protected than the floor we promised?
+
+- **What it checks:** CrowdStrike sensor coverage, Jamf managed-device
+  coverage, and Okta MFA coverage, each with a 95% floor (in
+  `tools/coverageguard/coverageguard.json`), plus three hard protections
+  that must stay on: CrowdStrike uninstall protection, Jamf FileVault
+  enforcement, and Okta MFA-required.
+- **How:** it takes a live coverage snapshot, applies the Terraform
+  plan to it as deltas, and fails the PR (exit 1) if any dimension
+  drops below its floor or a hard protection is turned off or deleted.
+  A small drop that stays above the floor is a WARN, not a fail.
+- **The principle:** it only ever blocks work that would make the end
+  state worse. It does not care how the change was made, and it never
+  blocks work for process reasons.
+
+Stdlib-only Python, 15 unit tests (`cd tools/coverageguard && python3 -m unittest test_coverageguard -v`),
+no paid service, no server. The POC ships a checked-in *example*
+snapshot so it can be run with no accounts or credentials; in
+production, a workflow step fetches a read-only snapshot from the
+CrowdStrike / Jamf / Okta APIs first — see `tools/coverageguard/README.md`
+for the wiring and the honest limits. With the current S3-only
+Terraform, no plan touches those systems, so CoverageGuard passes
+and stays out of the way until Jamf / Okta / CrowdStrike resources
+are added.
 
 | Concern | Choice | Cost |
 |---|---|---|
@@ -120,7 +150,8 @@ cd terraform/envs/dev && terraform init && terraform plan
 - `terraform init -backend=false && terraform validate` — dev, prod, bootstrap — all pass, no warnings (fixed a lifecycle `filter {}` warning during validation)
 - Workflows are YAML only (not run here — they need a GitHub repo + AWS account; run the first PR to prove them).
 - PlanGuard: 9 unit tests pass; demo verified — unchanged plan verifies OK, tampered plan fails with exit 1.
-- Note: the POC is staged locally in `~/workspace/terraform-cicd-poc/` and has **not** been pushed to GitHub yet — that waits for GitHub to show as connected. Target repo is `terraform-pipeline` (personal, private). No other repo was touched.
+- CoverageGuard: 15 unit tests pass; demo verified — example pass plan exits 0, 10 uncovered Okta users (Okta MFA 98.0% → 91.9%) exits 1, disabling CrowdStrike uninstall protection exits 1, missing snapshot exits 2.
+- Note: the POC was pushed to `riedwards576/terraformation` (private) on 2026-11-11 — all 35 original files verified in place. CoverageGuard (8 new files) is staged locally and not yet pushed.
 
 ## Next steps when budget / scale grows
 1. **Infracost** (free tier) for real $ estimates on PRs, replacing `cost-check.sh`.

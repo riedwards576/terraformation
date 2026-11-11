@@ -1,0 +1,1 @@
+{"crowdstrike":{"sensor_hosts":196,"total_hosts":200,"uninstall_protection_enabled":true},"jamf":{"filevault_enforced":true,"managed_devices":176,"total_devices":180},"okta":{"mfa_required":true,"mfa_users":147,"total_users":150}}
