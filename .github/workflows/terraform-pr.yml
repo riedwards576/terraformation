@@ -10,6 +10,7 @@ on:
       - "terraform/**"
       - "policy/**"
       - "tools/planguard/**"
+      - "tools/coverageguard/**"
       - ".github/workflows/terraform-pr.yml"
 
 permissions:
@@ -31,6 +32,11 @@ jobs:
         env: [dev, prod]
     steps:
       - uses: actions/checkout@v4
+
+      # CoverageGuard unit tests — stdlib-only Python, no AWS, no network.
+      - name: CoverageGuard unit tests
+        run: python3 -m unittest test_coverageguard -v
+        working-directory: tools/coverageguard
 
       - name: Configure AWS (OIDC, read-only role)
         uses: aws-actions/configure-aws-credentials@v4
@@ -95,6 +101,47 @@ jobs:
           path: terraform/envs/${{ matrix.env }}/attestation.json
           retention-days: 30
 
+      # CoverageGuard: does this plan leave the end state worse?
+      # It applies the plan as deltas to a live coverage snapshot
+      # and fails if CrowdStrike / Jamf / Okta coverage drops below
+      # the 95% floor, or a hard protection is turned off.
+      # POC NOTE: the snapshot here is the checked-in *example*
+      # (tools/coverageguard/examples/snapshot.json). In production,
+      # replace it with a step that fetches a read-only snapshot
+      # from the CrowdStrike / Jamf / Okta APIs and writes
+      # coverage-snapshot.json, then point --snapshot at that file.
+      # Do not ship the example snapshot as live data.
+      # The check's exit code is captured, not allowed to fail the
+      # job immediately, so the PR comment below still posts with
+      # the coverage verdict — the "Fail if CoverageGuard failed"
+      # step at the end is what actually blocks the PR.
+      - name: CoverageGuard check
+        id: coverageguard
+        working-directory: terraform/envs/${{ matrix.env }}
+        run: |
+          set +e
+          python3 ../../../tools/coverageguard/coverageguard.py check \
+            --snapshot ../../../tools/coverageguard/examples/snapshot.json \
+            --plan plan.json \
+            --config ../../../tools/coverageguard/coverageguard.json \
+            --out coverage-report.json
+          CG_RC=$?
+          set -e
+          if [ -f coverage-report.json ]; then
+            echo "coverage_status=$(python3 -c 'import json; print(json.load(open("coverage-report.json"))["overall"])')" >> "$GITHUB_OUTPUT"
+          else
+            echo "coverage_status=ERROR" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$CG_RC" -ne 0 ]; then echo "coverage_failed=true" >> "$GITHUB_OUTPUT"; else echo "coverage_failed=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Upload CoverageGuard report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverageguard-${{ matrix.env }}
+          path: terraform/envs/${{ matrix.env }}/coverage-report.json
+          retention-days: 30
+
       # HIGH / CRITICAL plans get a label so a second reviewer is obvious.
       # The label is a signal; the prod Environment approval is the gate.
       - name: Label high-risk plan
@@ -116,11 +163,13 @@ jobs:
           PLAN_SHA: ${{ steps.planguard.outputs.plan_sha256 }}
           RISK_BAND: ${{ steps.planguard.outputs.risk_band }}
           RISK_SCORE: ${{ steps.planguard.outputs.risk_score }}
+          COVERAGE_STATUS: ${{ steps.coverageguard.outputs.coverage_status }}
         with:
           script: |
             const out = `#### Terraform Plan — ${{ matrix.env }} 🌱
             **PlanGuard:** risk ${process.env.RISK_SCORE} (${process.env.RISK_BAND}) · plan \`sha256:${process.env.PLAN_SHA.slice(0, 12)}…\`
             The apply job will refuse to apply unless its fresh plan hashes to this value.
+            **CoverageGuard:** ${process.env.COVERAGE_STATUS} · floors 95% (CrowdStrike sensor / Jamf managed / Okta MFA), hard protections must stay on.
             \`\`\`
             ${process.env.PLAN.slice(0, 60000)}
             \`\`\`
@@ -131,3 +180,13 @@ jobs:
               repo: context.repo.repo,
               body: out
             });
+
+      # The actual CoverageGuard gate, after the PR comment has posted:
+      # fail the job (and the PR) if the end state would drop below
+      # the coverage floor or turn off a hard protection.
+      - name: Fail if CoverageGuard failed
+        if: steps.coverageguard.outputs.coverage_failed == 'true'
+        run: |
+          echo "CoverageGuard failed for ${{ matrix.env }} — see the coverage-report.json artifact."
+          echo "Change the plan so the end state stays above the floor, or change the floor in coverageguard.json and get that change reviewed."
+          exit 1
