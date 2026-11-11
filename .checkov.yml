@@ -1,0 +1,6 @@
+# Checkov config — run locally: checkov -d terraform/
+framework:
+  - terraform
+soft-fail: false
+# Add a skip with a comment + expiry in code, never silently here.
+# Example: skip-check: CKV_AWS_144 # no cross-region replication in POC, revisit 2026-12-31
