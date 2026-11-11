@@ -11,6 +11,7 @@ on:
       - "policy/**"
       - "tools/planguard/**"
       - "tools/coverageguard/**"
+      - "tools/accessgraph/**"
       - ".github/workflows/terraform-pr.yml"
 
 permissions:
@@ -37,6 +38,11 @@ jobs:
       - name: CoverageGuard unit tests
         run: python3 -m unittest test_coverageguard -v
         working-directory: tools/coverageguard
+
+      # AccessGraph unit tests — stdlib-only Python, no AWS, no network.
+      - name: AccessGraph unit tests
+        run: python3 -m unittest test_accessgraph -v
+        working-directory: tools/accessgraph
 
       - name: Configure AWS (OIDC, read-only role)
         uses: aws-actions/configure-aws-credentials@v4
@@ -142,6 +148,40 @@ jobs:
           path: terraform/envs/${{ matrix.env }}/coverage-report.json
           retention-days: 30
 
+      # AccessGraph: audit streamliner, report-only by design.
+      # It ties Okta group membership to third-party access and role
+      # (Jamf / CrowdStrike / Okta) and produces one audit report.
+      # It does NOT block the PR — admin access here is documented
+      # in Okta, not elusive, so a gate would just be a noisy
+      # version of the manual audit. Warnings are reported, not
+      # failed on. (--strict exists for teams that want the gate;
+      # this workflow deliberately does not use it.)
+      # POC NOTE: the snapshot and mapping here are the checked-in
+      # *examples* (tools/accessgraph/examples/). In production,
+      # replace them with a step that fetches a read-only snapshot
+      # from the Okta API and generates the mapping from the same
+      # Terraform code that creates the groups and role assignments.
+      # Do not ship the example snapshot as live data.
+      - name: AccessGraph audit
+        id: accessgraph
+        working-directory: tools/accessgraph
+        run: |
+          python3 accessgraph.py audit \
+            --snapshot examples/snapshot.json \
+            --mapping examples/mapping.json \
+            --out access-report.json
+          echo "access_users=$(python3 -c 'import json; print(json.load(open("access-report.json"))["summary"]["users"])')" >> "$GITHUB_OUTPUT"
+          echo "access_admin_users=$(python3 -c 'import json; print(json.load(open("access-report.json"))["summary"]["admin_users"])')" >> "$GITHUB_OUTPUT"
+          echo "access_warnings=$(python3 -c 'import json; print(json.load(open("access-report.json"))["summary"]["warnings"])')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload AccessGraph report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: accessgraph-${{ matrix.env }}
+          path: tools/accessgraph/access-report.json
+          retention-days: 30
+
       # HIGH / CRITICAL plans get a label so a second reviewer is obvious.
       # The label is a signal; the prod Environment approval is the gate.
       - name: Label high-risk plan
@@ -164,12 +204,16 @@ jobs:
           RISK_BAND: ${{ steps.planguard.outputs.risk_band }}
           RISK_SCORE: ${{ steps.planguard.outputs.risk_score }}
           COVERAGE_STATUS: ${{ steps.coverageguard.outputs.coverage_status }}
+          ACCESS_USERS: ${{ steps.accessgraph.outputs.access_users }}
+          ACCESS_ADMIN_USERS: ${{ steps.accessgraph.outputs.access_admin_users }}
+          ACCESS_WARNINGS: ${{ steps.accessgraph.outputs.access_warnings }}
         with:
           script: |
             const out = `#### Terraform Plan — ${{ matrix.env }} 🌱
             **PlanGuard:** risk ${process.env.RISK_SCORE} (${process.env.RISK_BAND}) · plan \`sha256:${process.env.PLAN_SHA.slice(0, 12)}…\`
             The apply job will refuse to apply unless its fresh plan hashes to this value.
             **CoverageGuard:** ${process.env.COVERAGE_STATUS} · floors 95% (CrowdStrike sensor / Jamf managed / Okta MFA), hard protections must stay on.
+            **AccessGraph:** ${process.env.ACCESS_USERS} users, ${process.env.ACCESS_ADMIN_USERS} admin users, ${process.env.ACCESS_WARNINGS} warning(s) · report-only audit, see the access-report.json artifact.
             \`\`\`
             ${process.env.PLAN.slice(0, 60000)}
             \`\`\`
