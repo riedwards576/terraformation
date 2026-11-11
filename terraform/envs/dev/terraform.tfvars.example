@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars and set a unique suffix.
+# terraform.tfvars is gitignored — never commit real values.
+bucket_suffix = "CHANGE-ME-01"
+owner         = "platform-team"
+cost_center   = "engineering"
+aws_region    = "us-east-1"
