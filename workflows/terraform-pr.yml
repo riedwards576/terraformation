@@ -1,0 +1,133 @@
+name: Terraform PR — plan
+
+# PRs never apply. They fmt / validate / lint / scan / plan,
+# then post the plan as a PR comment for review.
+# Secrets are never printed; plan output is truncated to fit GitHub limits.
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - "policy/**"
+      - "tools/planguard/**"
+      - ".github/workflows/terraform-pr.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write # OIDC to AWS — no long-lived keys
+
+env:
+  TF_VERSION: "1.9.8"
+  AWS_REGION: us-east-1
+
+jobs:
+  plan:
+    name: Plan ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [dev, prod]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS (OIDC, read-only role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_READONLY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform fmt (check)
+        run: terraform fmt -check -recursive -diff
+
+      - name: Init
+        working-directory: terraform/envs/${{ matrix.env }}
+        run: terraform init -backend=false
+
+      - name: Validate
+        working-directory: terraform/envs/${{ matrix.env }}
+        run: terraform validate
+
+      - name: TFLint
+        uses: terraform-linters/setup-tflint@v4
+      - run: tflint --init && tflint --recursive
+
+      - name: Plan
+        id: plan
+        working-directory: terraform/envs/${{ matrix.env }}
+        run: terraform plan -no-color -input=false -out=tfplan
+        continue-on-error: true
+
+      - name: Plan to JSON (for OPA)
+        working-directory: terraform/envs/${{ matrix.env }}
+        run: terraform show -json tfplan > plan.json
+
+      - name: OPA / Conftest policy check
+        uses: open-policy-agent/setup-conftest@v1
+      - run: conftest test terraform/envs/${{ matrix.env }}/plan.json --policy policy/
+
+      # PlanGuard (the novel piece): hash + risk-score the plan that was
+      # just reviewed, and store the attestation so the apply job can
+      # prove it is applying *this* plan, not a newer one.
+      # Stdlib-only Python — no pip install, no extra service.
+      - name: PlanGuard attest
+        id: planguard
+        working-directory: terraform/envs/${{ matrix.env }}
+        run: |
+          python3 ../../../tools/planguard/planguard.py attest \
+            --plan plan.json --out attestation.json \
+            --commit "$GITHUB_SHA" --pr "${{ github.event.pull_request.number }}" \
+            --actor "$GITHUB_ACTOR" --env "${{ matrix.env }}"
+          python3 ../../../tools/planguard/planguard.py score --plan plan.json
+          echo "plan_sha256=$(python3 -c 'import json; print(json.load(open("attestation.json"))["plan_sha256"])')" >> "$GITHUB_OUTPUT"
+          echo "risk_band=$(python3 -c 'import json; print(json.load(open("attestation.json"))["risk"]["band"])')" >> "$GITHUB_OUTPUT"
+          echo "risk_score=$(python3 -c 'import json; print(json.load(open("attestation.json"))["risk"]["score"])')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload PlanGuard attestation
+        uses: actions/upload-artifact@v4
+        with:
+          name: planguard-${{ matrix.env }}
+          path: terraform/envs/${{ matrix.env }}/attestation.json
+          retention-days: 30
+
+      # HIGH / CRITICAL plans get a label so a second reviewer is obvious.
+      # The label is a signal; the prod Environment approval is the gate.
+      - name: Label high-risk plan
+        if: steps.planguard.outputs.risk_band == 'HIGH' || steps.planguard.outputs.risk_band == 'CRITICAL'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['needs-extra-review']
+            });
+
+      - name: Post plan to PR
+        uses: actions/github-script@v7
+        env:
+          PLAN: ${{ steps.plan.outputs.stdout }}
+          PLAN_SHA: ${{ steps.planguard.outputs.plan_sha256 }}
+          RISK_BAND: ${{ steps.planguard.outputs.risk_band }}
+          RISK_SCORE: ${{ steps.planguard.outputs.risk_score }}
+        with:
+          script: |
+            const out = `#### Terraform Plan — ${{ matrix.env }} 🌱
+            **PlanGuard:** risk ${process.env.RISK_SCORE} (${process.env.RISK_BAND}) · plan \`sha256:${process.env.PLAN_SHA.slice(0, 12)}…\`
+            The apply job will refuse to apply unless its fresh plan hashes to this value.
+            \`\`\`
+            ${process.env.PLAN.slice(0, 60000)}
+            \`\`\`
+            *Pushed by @${context.actor}, Action \`${context.eventName}\`*`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: out
+            });
