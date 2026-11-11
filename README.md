@@ -16,11 +16,11 @@ PR ──▶ fmt · validate · tflint · Trivy · Checkov · OPA · plan ──
 Nightly ──▶ plan -detailed-exitcode ──▶ drift issue if anything changed outside Terraform
 ```
 
-## The novel piece: PlanGuard
+## PlanGuard
 
 Most Terraform pipelines approve Plan A in a PR, then apply a *different*
 Plan B days later because code or live state moved in between. PlanGuard
-closes that time-of-check / time-of-use gap — the interview talking point:
+closes that time-of-check / time-of-use gap.
 
 - **PR job:** `tools/planguard/planguard.py attest` hashes the canonical
   plan (SHA-256), scores its risk, and writes `attestation.json`
@@ -35,15 +35,13 @@ closes that time-of-check / time-of-use gap — the interview talking point:
   `needs-extra-review` label; prod already needs a human approver.
 
 Stdlib-only Python, 9 unit tests (`cd tools/planguard && python3 -m unittest test_planguard -v`),
-no paid service, no server. See `tools/planguard/README.md` for the
-30-second interview story and its honest limits (attestation, not yet
-Sigstore signing — that's the stated next step).
+no paid service, no server.
 
-## Second novel piece: CoverageGuard
+## CoverageGuard
 
 PlanGuard proves the *plan* didn't change. CoverageGuard judges the
 *end state* — after this plan is applied, will fewer devices or users
-be protected than the floor we promised?
+be protected than the floor we established?
 
 - **What it checks:** CrowdStrike sensor coverage, Jamf managed-device
   coverage, and Okta MFA coverage, each with a 95% floor (in
@@ -68,12 +66,10 @@ Terraform, no plan touches those systems, so CoverageGuard passes
 and stays out of the way until Jamf / Okta / CrowdStrike resources
 are added.
 
-## Third novel piece: AccessGraph
+## AccessGraph
 
-Okta is the source of truth for access, and the groups that grant
-third-party access follow a naming convention — so an admin can
-already audit a user by hand, starting from their Okta group
-membership. AccessGraph does that audit automatically:
+AccessGraph will surface click-ops happening in Okta. This is usually the case
+when multiple teams administer different parts of Okta. AccessGraph does the audit automatically:
 
 - **What it does:** takes an Okta snapshot (users, groups, direct
   and nested membership) and a group-to-role mapping, and produces
@@ -99,7 +95,7 @@ creates the groups and role assignments — see
 It also supports auditing one user at a time (`--user alice`),
 the way an admin would start an audit.
 
-## Fourth novel piece: GhostChange
+## GhostChange
 
 Terraform declares the SaaS config — Okta sign-on policies, Jamf
 disk-encryption profiles, CrowdStrike prevention policies. But
@@ -230,7 +226,7 @@ cd terraform/envs/dev && terraform init && terraform plan
 4. **KMS CMK + CloudTrail + GuardDuty** once you hold customer data.
 5. **OpenTofu** if HashiCorp licensing matters to you — workflows change by one action name.
 
-## Decisions to confirm with Richard
-- Cloud is **AWS / us-east-1** in this POC — say the word if it's Azure/GCP instead; the pipeline shape is identical, only the provider + OIDC setup changes.
-- Example workload is **S3 only** to stay at $0 — happy to add a VPC/ECS module next if you want a compute example.
-- Prod is **manual dispatch + reviewer approval**; dev auto-applies on merge. Flip either if you want prod on merge-with-approval instead.
+## Items to consider in the next version of Terraform pipeline:
+- Increase usability to Azure/GCP. The pipeline shape is identical, only the provider + OIDC setup changes.
+- Example workload is **S3 only** to stay at $0. Add a VPC/ECS module for a compute example. Build complexity as you learn.
+- Prod is **manual dispatch + reviewer approval**; dev auto-applies on merge. Flip so we update prod on merge-with-approval instead.
