@@ -151,7 +151,7 @@ cd terraform/envs/dev && terraform init && terraform plan
 - Workflows are YAML only (not run here — they need a GitHub repo + AWS account; run the first PR to prove them).
 - PlanGuard: 9 unit tests pass; demo verified — unchanged plan verifies OK, tampered plan fails with exit 1.
 - CoverageGuard: 15 unit tests pass; demo verified — example pass plan exits 0, 10 uncovered Okta users (Okta MFA 98.0% → 91.9%) exits 1, disabling CrowdStrike uninstall protection exits 1, missing snapshot exits 2.
-- Note: the POC was pushed to `riedwards576/terraformation` (private) on 2026-11-11 — all 35 original files verified in place. CoverageGuard (8 new files) is staged locally and not yet pushed.
+- Note: the POC was pushed to `riedwards576/terraformation` (private) on 2026-11-11 — all 35 original files verified in place, then CoverageGuard (8 new files) and the updated `terraform-pr.yml`, verified complete at 43 files, head `a2957fd9`.
 
 ## Next steps when budget / scale grows
 1. **Infracost** (free tier) for real $ estimates on PRs, replacing `cost-check.sh`.
