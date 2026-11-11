@@ -10,6 +10,7 @@ Example workload is a secure-by-default S3 bucket — cheap enough to run at $0,
 PR ──▶ fmt · validate · tflint · Trivy · Checkov · OPA · plan ──▶ plan posted to PR
  │        + PlanGuard attest (hash + risk score)                     (no apply)
  │        + CoverageGuard check (end-state coverage floor)
+ │        + AccessGraph audit (Okta access map, report-only)
  └─ merge to main ──▶ PlanGuard verify ──▶ apply dev (auto) ──▶ apply prod (manual + reviewer)
 Nightly ──▶ plan -detailed-exitcode ──▶ drift issue if anything changed outside Terraform
 ```
@@ -65,6 +66,37 @@ for the wiring and the honest limits. With the current S3-only
 Terraform, no plan touches those systems, so CoverageGuard passes
 and stays out of the way until Jamf / Okta / CrowdStrike resources
 are added.
+
+## Third novel piece: AccessGraph
+
+Okta is the source of truth for access, and the groups that grant
+third-party access follow a naming convention — so an admin can
+already audit a user by hand, starting from their Okta group
+membership. AccessGraph does that audit automatically:
+
+- **What it does:** takes an Okta snapshot (users, groups, direct
+  and nested membership) and a group-to-role mapping, and produces
+  every user's effective access in Jamf, CrowdStrike, and Okta,
+  plus findings: admins reached only via group nesting, admin
+  grants to broad groups, multi-system admins, stale admin groups
+  with no members, groups breaking the naming convention, and
+  groups with no mapping (access unknown, never invented).
+- **The principle:** it is a report, not a blocker. Admin access
+  here is documented in Okta, not elusive, so a gate would just be
+  a noisy version of the manual audit. The PR workflow runs it,
+  uploads `access-report.json`, and posts a summary — and passes
+  regardless of the findings. An opt-in `--strict` mode exists
+  (exit 1 on any warning) for teams that want the gate.
+
+Stdlib-only Python, 15 unit tests (`cd tools/accessgraph && python3 -m unittest test_accessgraph -v`),
+no paid service, no server. The POC ships checked-in *example*
+snapshot and mapping files so it can be run with no accounts or
+credentials; in production, the snapshot comes from the Okta API
+and the mapping is generated from the same Terraform code that
+creates the groups and role assignments — see
+`tools/accessgraph/README.md` for the wiring and the honest limits.
+It also supports auditing one user at a time (`--user alice`),
+the way an admin would start an audit.
 
 | Concern | Choice | Cost |
 |---|---|---|
@@ -151,7 +183,8 @@ cd terraform/envs/dev && terraform init && terraform plan
 - Workflows are YAML only (not run here — they need a GitHub repo + AWS account; run the first PR to prove them).
 - PlanGuard: 9 unit tests pass; demo verified — unchanged plan verifies OK, tampered plan fails with exit 1.
 - CoverageGuard: 15 unit tests pass; demo verified — example pass plan exits 0, 10 uncovered Okta users (Okta MFA 98.0% → 91.9%) exits 1, disabling CrowdStrike uninstall protection exits 1, missing snapshot exits 2.
-- Note: the POC was pushed to `riedwards576/terraformation` (private) on 2026-11-11 — all 35 original files verified in place, then CoverageGuard (8 new files) and the updated `terraform-pr.yml`, verified complete at 43 files, head `a2957fd9`.
+- AccessGraph: 15 unit tests pass; demo verified on the checked-in examples — 8 users, 6 admin users, 11 warnings (Alice and Bob as Okta Super Admins only via nesting, a 5-person CrowdStrike admin group, 3 naming violations, an unmapped VPN group, a stale legacy admin group); default run exits 0, `--strict` exits 1, missing snapshot exits 2.
+- Note: the POC was pushed to `riedwards576/terraformation` (private) on 2026-11-11 — all 35 original files verified in place, then CoverageGuard (8 new files) and the updated `terraform-pr.yml`, verified complete at 43 files, head `a2957fd9`, plus a README correction, head `d69ca50a`. AccessGraph (5 new files) is staged locally and not yet pushed.
 
 ## Next steps when budget / scale grows
 1. **Infracost** (free tier) for real $ estimates on PRs, replacing `cost-check.sh`.
