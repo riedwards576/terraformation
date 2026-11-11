@@ -1,4 +1,4 @@
-# Terraform CI/CD POC — $0, open-source, secure by default
+# Terraform CI/CD POC — open-source, secure by default
 
 A proof of concept for a startup with very little budget: **GitHub Actions + Terraform + AWS, with OIDC auth, remote state, policy-as-code, and drift detection. No paid SaaS required.**
 
