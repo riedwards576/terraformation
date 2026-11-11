@@ -1,0 +1,1 @@
+{"critical_kinds":["crowdstrike_prevention_policy","jamf_disk_encryption_policy","okta_signon_policy"],"ignore_keys":["last_modified","version"]}

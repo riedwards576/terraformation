@@ -11,6 +11,7 @@ PR ──▶ fmt · validate · tflint · Trivy · Checkov · OPA · plan ──
  │        + PlanGuard attest (hash + risk score)                     (no apply)
  │        + CoverageGuard check (end-state coverage floor)
  │        + AccessGraph audit (Okta access map, report-only)
+ │        + GhostChange drift check (click-ops drift, report-only)
  └─ merge to main ──▶ PlanGuard verify ──▶ apply dev (auto) ──▶ apply prod (manual + reviewer)
 Nightly ──▶ plan -detailed-exitcode ──▶ drift issue if anything changed outside Terraform
 ```
@@ -98,6 +99,41 @@ creates the groups and role assignments — see
 It also supports auditing one user at a time (`--user alice`),
 the way an admin would start an audit.
 
+## Fourth novel piece: GhostChange
+
+Terraform declares the SaaS config — Okta sign-on policies, Jamf
+disk-encryption profiles, CrowdStrike prevention policies. But
+those consoles are one click away, and when click-ops is rampant
+the live config quietly stops matching what Terraform thinks it
+manages. GhostChange compares a live snapshot against what
+Terraform declares and lists what moved outside Terraform:
+
+- **What it finds:** `unmanaged` (exists live, never declared —
+  made in a console), `drifted` (declared, but live settings
+  differ — edited in a console), `missing` (declared, but gone
+  live — deleted in a console). Severity comes from a small
+  critical-kinds list in `tools/ghostchange/ghostchange.json`;
+  everything else is a warning, and metadata keys like
+  `last_modified` are ignored so a read that changes nothing real
+  never raises a finding.
+- **The principle:** it is a report, not a blocker. If click-ops
+  is rampant, a gate on drift would block engineering work
+  constantly and hinder more than it helps. The team's response
+  to drift is a decision — adopt it into Terraform or revert it —
+  and a report supports that decision while a block just stops
+  work. The PR workflow runs the check, uploads
+  `ghost-report.json`, and posts a summary — and passes
+  regardless of the findings. An opt-in `--strict` mode exists
+  (exit 1 only on critical drift) for teams that want the gate.
+
+Stdlib-only Python, 15 unit tests (`cd tools/ghostchange && python3 -m unittest test_ghostchange -v`),
+no paid service, no server. The POC ships checked-in *example*
+live and desired files so it can be run with no accounts or
+credentials; in production, the live snapshot comes from the
+Jamf / Okta / CrowdStrike APIs and the desired state is generated
+from the same Terraform code that manages the config — see
+`tools/ghostchange/README.md` for the wiring and the honest limits.
+
 | Concern | Choice | Cost |
 |---|---|---|
 | CI/CD | GitHub Actions (2,000 free min/mo private, unlimited public) | $0 |
@@ -184,7 +220,8 @@ cd terraform/envs/dev && terraform init && terraform plan
 - PlanGuard: 9 unit tests pass; demo verified — unchanged plan verifies OK, tampered plan fails with exit 1.
 - CoverageGuard: 15 unit tests pass; demo verified — example pass plan exits 0, 10 uncovered Okta users (Okta MFA 98.0% → 91.9%) exits 1, disabling CrowdStrike uninstall protection exits 1, missing snapshot exits 2.
 - AccessGraph: 15 unit tests pass; demo verified on the checked-in examples — 8 users, 6 admin users, 11 warnings (Alice and Bob as Okta Super Admins only via nesting, a 5-person CrowdStrike admin group, 3 naming violations, an unmapped VPN group, a stale legacy admin group); default run exits 0, `--strict` exits 1, missing snapshot exits 2.
-- Note: the POC was pushed to `riedwards576/terraformation` (private) on 2026-11-11 — all 35 original files verified in place, then CoverageGuard (8 new files) and the updated `terraform-pr.yml`, verified complete at 43 files, head `a2957fd9`, plus a README correction, head `d69ca50a`. AccessGraph (5 new files) is staged locally and not yet pushed.
+- GhostChange: 15 unit tests pass; demo verified on the checked-in examples — 5 live, 5 desired, 3 ok, 1 drifted (uninstall protection turned off in the CrowdStrike console, critical), 1 unmanaged (Jamf profile made in the console), 1 missing (sensor policy deleted out of band); default run exits 0, `--strict` exits 1 on critical drift only, missing file exits 2.
+- Note: the POC was pushed to `riedwards576/terraformation` (private) on 2026-11-11 — all 35 original files verified in place, then CoverageGuard (8 new files) and the updated `terraform-pr.yml`, verified complete at 43 files, head `a2957fd9`, plus a README correction, head `d69ca50a`. AccessGraph (5 new files) pushed 2026-11-11, verified complete at 48 files, head `edf136d6`; Richard also uploaded the updated `terraform-pr.yml` himself ("Adding in AccessGraph tooling", `4e272fbc`) just before that push, and it matches local exactly. GhostChange (6 new files) is staged locally and not yet pushed.
 
 ## Next steps when budget / scale grows
 1. **Infracost** (free tier) for real $ estimates on PRs, replacing `cost-check.sh`.
