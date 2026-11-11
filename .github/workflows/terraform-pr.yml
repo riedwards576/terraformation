@@ -12,6 +12,7 @@ on:
       - "tools/planguard/**"
       - "tools/coverageguard/**"
       - "tools/accessgraph/**"
+      - "tools/ghostchange/**"
       - ".github/workflows/terraform-pr.yml"
 
 permissions:
@@ -43,6 +44,11 @@ jobs:
       - name: AccessGraph unit tests
         run: python3 -m unittest test_accessgraph -v
         working-directory: tools/accessgraph
+
+      # GhostChange unit tests — stdlib-only Python, no AWS, no network.
+      - name: GhostChange unit tests
+        run: python3 -m unittest test_ghostchange -v
+        working-directory: tools/ghostchange
 
       - name: Configure AWS (OIDC, read-only role)
         uses: aws-actions/configure-aws-credentials@v4
@@ -182,6 +188,45 @@ jobs:
           path: tools/accessgraph/access-report.json
           retention-days: 30
 
+      # GhostChange: click-ops drift detector, report-only by design.
+      # It compares a live snapshot of Jamf / Okta / CrowdStrike config
+      # against what Terraform declares, and reports what moved
+      # outside Terraform (unmanaged, drifted, missing).
+      # It does NOT block the PR — click-ops is rampant, so a gate
+      # on drift would block engineering work constantly and hinder
+      # more than it helps. Drift is reported for the team to adopt
+      # into code or revert, not failed on. (--strict exists and
+      # fails only on critical drift; this workflow deliberately
+      # does not use it.)
+      # POC NOTE: the live snapshot and desired state here are the
+      # checked-in *examples* (tools/ghostchange/examples/). In
+      # production, replace them with a step that fetches a read-only
+      # live snapshot from the Jamf / Okta / CrowdStrike APIs and
+      # generates the desired state from the same Terraform code
+      # that manages the config. Do not ship the example snapshot
+      # as live data.
+      - name: GhostChange drift check
+        id: ghostchange
+        working-directory: tools/ghostchange
+        run: |
+          python3 ghostchange.py check \
+            --live examples/live.json \
+            --desired examples/desired.json \
+            --config ghostchange.json \
+            --out ghost-report.json
+          echo "ghost_drifted=$(python3 -c 'import json; print(json.load(open("ghost-report.json"))["summary"]["drifted"])')" >> "$GITHUB_OUTPUT"
+          echo "ghost_unmanaged=$(python3 -c 'import json; print(json.load(open("ghost-report.json"))["summary"]["unmanaged"])')" >> "$GITHUB_OUTPUT"
+          echo "ghost_missing=$(python3 -c 'import json; print(json.load(open("ghost-report.json"))["summary"]["missing"])')" >> "$GITHUB_OUTPUT"
+          echo "ghost_critical=$(python3 -c 'import json; print(json.load(open("ghost-report.json"))["summary"]["critical"])')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload GhostChange report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghostchange-${{ matrix.env }}
+          path: tools/ghostchange/ghost-report.json
+          retention-days: 30
+
       # HIGH / CRITICAL plans get a label so a second reviewer is obvious.
       # The label is a signal; the prod Environment approval is the gate.
       - name: Label high-risk plan
@@ -207,6 +252,10 @@ jobs:
           ACCESS_USERS: ${{ steps.accessgraph.outputs.access_users }}
           ACCESS_ADMIN_USERS: ${{ steps.accessgraph.outputs.access_admin_users }}
           ACCESS_WARNINGS: ${{ steps.accessgraph.outputs.access_warnings }}
+          GHOST_DRIFTED: ${{ steps.ghostchange.outputs.ghost_drifted }}
+          GHOST_UNMANAGED: ${{ steps.ghostchange.outputs.ghost_unmanaged }}
+          GHOST_MISSING: ${{ steps.ghostchange.outputs.ghost_missing }}
+          GHOST_CRITICAL: ${{ steps.ghostchange.outputs.ghost_critical }}
         with:
           script: |
             const out = `#### Terraform Plan — ${{ matrix.env }} 🌱
@@ -214,6 +263,7 @@ jobs:
             The apply job will refuse to apply unless its fresh plan hashes to this value.
             **CoverageGuard:** ${process.env.COVERAGE_STATUS} · floors 95% (CrowdStrike sensor / Jamf managed / Okta MFA), hard protections must stay on.
             **AccessGraph:** ${process.env.ACCESS_USERS} users, ${process.env.ACCESS_ADMIN_USERS} admin users, ${process.env.ACCESS_WARNINGS} warning(s) · report-only audit, see the access-report.json artifact.
+            **GhostChange:** ${process.env.GHOST_DRIFTED} drifted, ${process.env.GHOST_UNMANAGED} unmanaged, ${process.env.GHOST_MISSING} missing, ${process.env.GHOST_CRITICAL} critical · report-only drift check, see the ghost-report.json artifact.
             \`\`\`
             ${process.env.PLAN.slice(0, 60000)}
             \`\`\`
