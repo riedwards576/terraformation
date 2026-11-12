@@ -154,6 +154,16 @@ jobs:
           path: terraform/envs/${{ matrix.env }}/coverage-report.json
           retention-days: 30
 
+      # D2 CLI (pinned v0.9.0) for the AccessGraph audit artifact:
+      # the .d2 diagram is rendered to a styled SVG that IT/Sec
+      # hands to auditors. Tarball checksum is verified before use.
+      - name: Install D2 CLI
+        run: |
+          curl -fsSL -o /tmp/d2.tar.gz https://github.com/d2lang/d2/releases/download/v0.9.0/d2-v0.9.0-linux-amd64.tar.gz
+          echo "5669ddc46b99e942cc96078f4a4e36d5e62103348f4c05179ede27802fdd87a9  /tmp/d2.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/d2.tar.gz -C /tmp
+          echo "/tmp/d2-v0.9.0/bin" >> "$GITHUB_PATH"
+
       # AccessGraph: audit streamliner, report-only by design.
       # It ties Okta group membership to third-party access and role
       # (Jamf / CrowdStrike / Okta) and produces one audit report.
@@ -176,6 +186,15 @@ jobs:
             --snapshot examples/snapshot.json \
             --mapping examples/mapping.json \
             --out access-report.json
+          python3 accessgraph.py graph \
+            --snapshot examples/snapshot.json \
+            --mapping examples/mapping.json \
+            --out access-graph.mmd
+          python3 accessgraph.py d2 \
+            --snapshot examples/snapshot.json \
+            --mapping examples/mapping.json \
+            --out access-graph.d2
+          d2 access-graph.d2 access-graph.svg
           echo "access_users=$(python3 -c 'import json; print(json.load(open("access-report.json"))["summary"]["users"])')" >> "$GITHUB_OUTPUT"
           echo "access_admin_users=$(python3 -c 'import json; print(json.load(open("access-report.json"))["summary"]["admin_users"])')" >> "$GITHUB_OUTPUT"
           echo "access_warnings=$(python3 -c 'import json; print(json.load(open("access-report.json"))["summary"]["warnings"])')" >> "$GITHUB_OUTPUT"
@@ -185,7 +204,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: accessgraph-${{ matrix.env }}
-          path: tools/accessgraph/access-report.json
+          path: |
+            tools/accessgraph/access-report.json
+            tools/accessgraph/access-graph.mmd
+            tools/accessgraph/access-graph.d2
+            tools/accessgraph/access-graph.svg
           retention-days: 30
 
       # GhostChange: click-ops drift detector, report-only by design.
@@ -258,11 +281,18 @@ jobs:
           GHOST_CRITICAL: ${{ steps.ghostchange.outputs.ghost_critical }}
         with:
           script: |
+            const graph = require('fs').readFileSync('tools/accessgraph/access-graph.mmd', 'utf8');
             const out = `#### Terraform Plan — ${{ matrix.env }} 🌱
             **PlanGuard:** risk ${process.env.RISK_SCORE} (${process.env.RISK_BAND}) · plan \`sha256:${process.env.PLAN_SHA.slice(0, 12)}…\`
             The apply job will refuse to apply unless its fresh plan hashes to this value.
             **CoverageGuard:** ${process.env.COVERAGE_STATUS} · floors 95% (CrowdStrike sensor / Jamf managed / Okta MFA), hard protections must stay on.
             **AccessGraph:** ${process.env.ACCESS_USERS} users, ${process.env.ACCESS_ADMIN_USERS} admin users, ${process.env.ACCESS_WARNINGS} warning(s) · report-only audit, see the access-report.json artifact.
+            <details><summary>AccessGraph — access map (user → group → role, pink = admin, dotted = via nesting)</summary>
+
+            \`\`\`mermaid
+            ${graph}
+            \`\`\`
+            </details>
             **GhostChange:** ${process.env.GHOST_DRIFTED} drifted, ${process.env.GHOST_UNMANAGED} unmanaged, ${process.env.GHOST_MISSING} missing, ${process.env.GHOST_CRITICAL} critical · report-only drift check, see the ghost-report.json artifact.
             \`\`\`
             ${process.env.PLAN.slice(0, 60000)}
