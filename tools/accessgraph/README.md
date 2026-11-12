@@ -46,7 +46,76 @@ python3 accessgraph.py audit --snapshot examples/snapshot.json --mapping example
 # Opt-in strict mode — exit 1 if any warning finding exists.
 # Not used by the PR workflow; see "Why it does not block PRs" below.
 python3 accessgraph.py audit --snapshot examples/snapshot.json --mapping examples/mapping.json --strict
+
+# Render the same audit as a Mermaid flowchart (user → group → role).
+python3 accessgraph.py graph --snapshot examples/snapshot.json --mapping examples/mapping.json --out access-graph.mmd
+
+# One user's subgraph, the way an admin would start an audit:
+python3 accessgraph.py graph --snapshot examples/snapshot.json --mapping examples/mapping.json --user alice
+
+# Render the same audit as a D2 diagram — the artifact for auditors.
+python3 accessgraph.py d2 --snapshot examples/snapshot.json --mapping examples/mapping.json --out access-graph.d2
+# Compile it with the D2 CLI (v0.9.0, pinned in the PR workflow):
+d2 access-graph.d2 access-graph.svg
+
+# One user's subgraph, same as graph:
+python3 accessgraph.py d2 --snapshot examples/snapshot.json --mapping examples/mapping.json --user alice
 ```
+
+## The D2 export
+
+The Mermaid graph is for reviewers — GitHub renders it in the PR
+comment. An auditor does not read PR comments; they get
+artifacts and files from IT/Sec. So the `d2` subcommand renders
+the same audit as a [D2](https://d2lang.com) diagram, which the PR
+workflow compiles to a styled SVG with the open-source D2 CLI and
+uploads as an artifact, alongside the `.d2` source — the two
+files an auditor can be handed.
+
+It uses the same visual language as the Mermaid graph: ovals for
+users, rectangles for groups, hexagons for roles, admin roles
+filled pink with a red border, solid edges for direct membership,
+dashed edges labelled "nested" for membership reached only through
+nesting. One difference matters for readability: every node and
+edge is defined once in the `.d2` source, however many users share
+a group or role, so the file an auditor reads states each fact
+once instead of repeating it per user.
+
+The PR workflow installs D2 v0.9.0 from the official release
+tarball (checksum-verified), generates `access-graph.d2`, renders
+`access-graph.svg`, and uploads both with the report artifact.
+A checked-in example is at `examples/access-graph.d2`, generated
+from the example snapshot and mapping — regenerating it must
+produce exactly that file, enforced by a unit test. Rendering it
+was verified by hand with D2 v0.9.0 (SVG and PNG); the unit tests
+do not shell out to the D2 binary, so they run with no network
+and no installed tools.
+
+## The graph export
+
+The audit is text and JSON — no picture. The `graph` subcommand
+renders the same audit as a Mermaid flowchart, which GitHub renders
+natively in markdown and in PR comments, so it can be pasted
+straight into either:
+
+- **Nodes:** one per user, group, and role. A group or role shared
+  by several users is drawn once.
+- **Edges:** user → group → system: role. Solid edges are direct
+  membership; dotted edges are membership reached only through
+  nesting — the case a manual audit most often misses.
+- **Admin roles** are highlighted pink (the `admin` class).
+- **Unmapped groups** appear as group nodes with no outgoing
+  edge — their access is unknown, and the graph shows that
+  instead of hiding it.
+
+The PR workflow generates `access-graph.mmd` on every PR, uploads
+it with the report artifact, and embeds it in the PR comment
+inside a collapsible section, so the reviewer sees the map
+without opening a file. A checked-in example is at
+`examples/access-graph.mmd`, generated from the example snapshot
+and mapping — regenerating it must produce exactly that file,
+enforced by a unit test, so the example cannot drift from the
+code.
 
 Exit codes: **0** report generated (warnings do not fail the run),
 **1** only with `--strict` and a warning present, **2** error

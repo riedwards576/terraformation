@@ -94,6 +94,44 @@ Usage
 
     # Opt-in strict mode (not used by the PR workflow):
     python3 accessgraph.py audit --snapshot snap.json --mapping map.json --strict
+
+Graph export
+------------
+The audit above is text and JSON — no picture. The ``graph``
+subcommand renders the same audit as a Mermaid flowchart, which
+GitHub renders natively in markdown and in PR comments:
+
+    user ──▶ Okta group ──▶ system: role
+
+Solid edges are direct membership; dotted edges are membership
+only via nesting (the case a manual audit misses). Admin roles
+are highlighted pink. One node per user, group, and role, so a
+shared group or role is drawn once, not once per user.
+
+    python3 accessgraph.py graph \\
+        --snapshot examples/snapshot.json \\
+        --mapping examples/mapping.json \\
+        --out access-graph.mmd
+
+    # One user's subgraph, the way an admin would start an audit:
+    python3 accessgraph.py graph --snapshot snap.json --mapping map.json --user alice
+
+D2 export
+---------
+The Mermaid graph is for reviewers in a PR comment. An auditor
+gets files from IT/Sec, not PR comments — so the ``d2`` subcommand
+renders the same audit as a D2 diagram, which the workflow
+compiles to a styled SVG with the open-source D2 CLI and uploads
+as an artifact, alongside the ``.d2`` source:
+
+    python3 accessgraph.py d2 \\
+        --snapshot examples/snapshot.json \\
+        --mapping examples/mapping.json \\
+        --out access-graph.d2
+    d2 access-graph.d2 access-graph.svg   # needs the D2 CLI (v0.9.0)
+
+    # One user's subgraph:
+    python3 accessgraph.py d2 --snapshot snap.json --mapping map.json --user alice
 """
 
 from __future__ import annotations
@@ -430,6 +468,194 @@ def print_report(report: AuditReport, only_user: str | None = None) -> None:
             print(f"  [{finding.severity.upper():4}] {finding.kind}: {finding.detail}")
 
 
+def _node_id(prefix: str, text: str) -> str:
+    """A Mermaid-safe node id: letters, digits and underscores only."""
+    safe = re.sub(r"[^A-Za-z0-9_]", "_", text)
+    return f"{prefix}_{safe}"
+
+
+def render_mermaid(report: AuditReport, only_user: str | None = None) -> str:
+    """Render the audit as a Mermaid flowchart: user -> group -> role.
+
+    Pure logic — no files, no network. One node per user, group, and
+    role, so a group or role shared by several users is drawn once.
+    Solid edges are direct membership; dotted edges are membership
+    reached only through nesting. Admin roles are highlighted with
+    the ``admin`` class. GitHub renders Mermaid natively in markdown
+    and in PR comments, so the output can be pasted straight into
+    either.
+    """
+    users = [u for u in report.users
+             if not only_user or u.user_id == only_user or u.name == only_user]
+    lines = [
+        "graph TD",
+        "%% AccessGraph: user --> group --> system: role. "
+        "Solid = direct membership, dotted = via nesting. Pink = admin role.",
+        "classDef admin fill:#f9c,stroke:#c00,stroke-width:2px;",
+    ]
+    admin_roles: set[str] = set()
+    for user in users:
+        user_node = _node_id("u", user.user_id)
+        lines.append(f'    {user_node}["{user.name}"]')
+        direct = set(user.groups)
+        for group in user.effective_groups:
+            group_node = _node_id("g", group)
+            lines.append(f'    {group_node}["{group}"]')
+            if group in direct:
+                lines.append(f"    {user_node} --> {group_node}")
+            else:
+                lines.append(f'    {user_node} -. "nested" .-> {group_node}')
+        for grant in sorted(user.access, key=lambda g: (g.system, g.role)):
+            role_node = _node_id("r", f"{grant.system}_{grant.role}")
+            lines.append(f'    {role_node}["{grant.system}: {grant.role}"]')
+            if grant.admin:
+                admin_roles.add(role_node)
+            for group in sorted(grant.via_groups):
+                lines.append(f"    {_node_id('g', group)} --> {role_node}")
+    for role_node in sorted(admin_roles):
+        lines.append(f"    class {role_node} admin;")
+    return "\n".join(lines) + "\n"
+
+
+def _d2_id(prefix: str, text: str) -> str:
+    """A D2-safe node id. D2 keys are case-insensitive, so lowercase."""
+    safe = re.sub(r"[^A-Za-z0-9_]", "_", text).lower()
+    return f"{prefix}_{safe}"
+
+
+def render_d2(report: AuditReport, only_user: str | None = None) -> str:
+    """Render the audit as a D2 diagram: user -> group -> role.
+
+    Pure logic — no files, no network. One node per user, group, and
+    role, so a group or role shared by several users is drawn once.
+    Users are ovals, groups rectangles, roles hexagons; solid edges
+    are direct membership, dashed edges are membership reached only
+    through nesting; admin roles are filled pink with a red border.
+    Compile with the D2 CLI: ``d2 access-graph.d2 access-graph.svg``.
+    """
+    users = [u for u in report.users
+             if not only_user or u.user_id == only_user or u.name == only_user]
+    lines = [
+        "# AccessGraph: user -> group -> system: role. "
+        "Solid = direct membership, dashed = via nesting. Pink = admin role.",
+        "direction: right",
+        "",
+    ]
+    admin_roles: set[str] = set()
+    seen_nodes: set[str] = set()
+    seen_role_edges: set[tuple[str, str]] = set()
+    for user in users:
+        user_node = _d2_id("u", user.user_id)
+        lines.append(f'{user_node}: "{user.name}" {{')
+        lines.append("  shape: oval")
+        lines.append("}")
+        direct = set(user.groups)
+        for group in user.effective_groups:
+            group_node = _d2_id("g", group)
+            # A group is one node, however many users share it.
+            if group_node not in seen_nodes:
+                seen_nodes.add(group_node)
+                lines.append(f'{group_node}: "{group}"')
+            if group in direct:
+                lines.append(f"  {user_node} -> {group_node}")
+            else:
+                lines.append(f'  {user_node} -> {group_node}: "nested" {{')
+                lines.append("    style.stroke-dash: 5")
+                lines.append("  }")
+        for grant in sorted(user.access, key=lambda g: (g.system, g.role)):
+            role_node = _d2_id("r", f"{grant.system}_{grant.role}")
+            # A role is one node, however many users hold it.
+            if role_node not in seen_nodes:
+                seen_nodes.add(role_node)
+                lines.append(f'  {role_node}: "{grant.system}: {grant.role}" {{')
+                lines.append("    shape: hexagon")
+                if grant.admin:
+                    lines.append('    style.fill: "#f9c"')
+                    lines.append('    style.stroke: "#c00"')
+                    lines.append("    style.stroke-width: 2")
+                lines.append("  }")
+            for group in sorted(grant.via_groups):
+                # A group grants a role once, however many users
+                # share it — emitting the edge per user would draw
+                # parallel arrows for the same fact.
+                edge = (_d2_id("g", group), role_node)
+                if edge not in seen_role_edges:
+                    seen_role_edges.add(edge)
+                    lines.append(f"  {edge[0]} -> {edge[1]}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def cmd_d2(args: argparse.Namespace) -> int:
+    """Render the audit as a D2 diagram (stdout, or --out file)."""
+    try:
+        snapshot = load_json(args.snapshot, "snapshot")
+        mapping = load_json(args.mapping, "mapping")
+    except SystemExit as exc:
+        return int(exc.code or 2)
+
+    errors = validate_snapshot(snapshot)
+    if errors:
+        for error in errors:
+            print(f"AccessGraph: ERROR — {error}", file=sys.stderr)
+        return 2
+    try:
+        if mapping.get("naming_convention"):
+            re.compile(mapping["naming_convention"])
+    except re.error as exc:
+        print(f"AccessGraph: ERROR — naming convention is not a valid regex: {exc}", file=sys.stderr)
+        return 2
+
+    report = audit(snapshot, mapping)
+    if args.user and args.user not in {u.user_id for u in report.users} \
+            and args.user not in {u.name for u in report.users}:
+        print(f"AccessGraph: ERROR — no user {args.user!r} in snapshot", file=sys.stderr)
+        return 2
+
+    text = render_d2(report, only_user=args.user)
+    if args.out:
+        args.out.write_text(text, encoding="utf-8")
+        print(f"AccessGraph: D2 diagram written to {args.out}")
+    else:
+        print(text, end="")
+    return 0
+
+
+def cmd_graph(args: argparse.Namespace) -> int:
+    """Render the audit as a Mermaid graph (stdout, or --out file)."""
+    try:
+        snapshot = load_json(args.snapshot, "snapshot")
+        mapping = load_json(args.mapping, "mapping")
+    except SystemExit as exc:
+        return int(exc.code or 2)
+
+    errors = validate_snapshot(snapshot)
+    if errors:
+        for error in errors:
+            print(f"AccessGraph: ERROR — {error}", file=sys.stderr)
+        return 2
+    try:
+        if mapping.get("naming_convention"):
+            re.compile(mapping["naming_convention"])
+    except re.error as exc:
+        print(f"AccessGraph: ERROR — naming convention is not a valid regex: {exc}", file=sys.stderr)
+        return 2
+
+    report = audit(snapshot, mapping)
+    if args.user and args.user not in {u.user_id for u in report.users} \
+            and args.user not in {u.name for u in report.users}:
+        print(f"AccessGraph: ERROR — no user {args.user!r} in snapshot", file=sys.stderr)
+        return 2
+
+    text = render_mermaid(report, only_user=args.user)
+    if args.out:
+        args.out.write_text(text, encoding="utf-8")
+        print(f"AccessGraph: graph written to {args.out}")
+    else:
+        print(text, end="")
+    return 0
+
+
 def cmd_audit(args: argparse.Namespace) -> int:
     """Run the audit: snapshot + mapping -> report (0, or 1 in --strict)."""
     try:
@@ -485,6 +711,22 @@ def build_parser() -> argparse.ArgumentParser:
     audit_cmd.add_argument("--strict", action="store_true",
                            help="Exit 1 if any warning finding exists (off by default)")
     audit_cmd.set_defaults(func=cmd_audit)
+
+    graph_cmd = sub.add_parser("graph", help="Render the audit as a Mermaid flowchart")
+    graph_cmd.add_argument("--snapshot", type=Path, required=True, help="Okta snapshot JSON")
+    graph_cmd.add_argument("--mapping", type=Path, required=True, help="Group-to-role mapping JSON")
+    graph_cmd.add_argument("--out", type=Path, default=None,
+                           help="Write the Mermaid diagram here (default: print it)")
+    graph_cmd.add_argument("--user", default=None, help="Render one user's subgraph only (id or name)")
+    graph_cmd.set_defaults(func=cmd_graph)
+
+    d2_cmd = sub.add_parser("d2", help="Render the audit as a D2 diagram (compile with the D2 CLI)")
+    d2_cmd.add_argument("--snapshot", type=Path, required=True, help="Okta snapshot JSON")
+    d2_cmd.add_argument("--mapping", type=Path, required=True, help="Group-to-role mapping JSON")
+    d2_cmd.add_argument("--out", type=Path, default=None,
+                        help="Write the D2 diagram here (default: print it)")
+    d2_cmd.add_argument("--user", default=None, help="Render one user's subgraph only (id or name)")
+    d2_cmd.set_defaults(func=cmd_d2)
 
     return parser
 

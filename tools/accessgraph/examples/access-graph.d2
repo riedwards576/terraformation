@@ -1,0 +1,97 @@
+# AccessGraph: user -> group -> system: role. Solid = direct membership, dashed = via nesting. Pink = admin role.
+direction: right
+
+u_alice: "Alice" {
+  shape: oval
+}
+g_okta_crowdstrike_admins: "okta-crowdstrike-admins"
+  u_alice -> g_okta_crowdstrike_admins
+g_okta_jamf_admins: "okta-jamf-admins"
+  u_alice -> g_okta_jamf_admins
+g_okta_okta_super_admins: "okta-okta-super-admins"
+  u_alice -> g_okta_okta_super_admins: "nested" {
+    style.stroke-dash: 5
+  }
+g_okta_vpn_users: "okta-vpn-users"
+  u_alice -> g_okta_vpn_users
+  r_crowdstrike_crowdstrike_falcon_administrator: "crowdstrike: CrowdStrike Falcon Administrator" {
+    shape: hexagon
+    style.fill: "#f9c"
+    style.stroke: "#c00"
+    style.stroke-width: 2
+  }
+  g_okta_crowdstrike_admins -> r_crowdstrike_crowdstrike_falcon_administrator
+  r_jamf_jamf_administrator: "jamf: Jamf Administrator" {
+    shape: hexagon
+    style.fill: "#f9c"
+    style.stroke: "#c00"
+    style.stroke-width: 2
+  }
+  g_okta_jamf_admins -> r_jamf_jamf_administrator
+  r_okta_okta_super_administrator: "okta: Okta Super Administrator" {
+    shape: hexagon
+    style.fill: "#f9c"
+    style.stroke: "#c00"
+    style.stroke-width: 2
+  }
+  g_okta_okta_super_admins -> r_okta_okta_super_administrator
+
+u_bob: "Bob" {
+  shape: oval
+}
+  u_bob -> g_okta_jamf_admins
+g_okta_okta_helpdesk: "okta-okta-helpdesk"
+  u_bob -> g_okta_okta_helpdesk
+  u_bob -> g_okta_okta_super_admins: "nested" {
+    style.stroke-dash: 5
+  }
+  r_okta_okta_help_desk_administrator: "okta: Okta Help Desk Administrator" {
+    shape: hexagon
+  }
+  g_okta_okta_helpdesk -> r_okta_okta_help_desk_administrator
+
+u_carol: "Carol" {
+  shape: oval
+}
+  u_carol -> g_okta_crowdstrike_admins
+g_okta_jamf_helpdesk: "okta-jamf-helpdesk"
+  u_carol -> g_okta_jamf_helpdesk
+  r_jamf_jamf_help_desk: "jamf: Jamf Help Desk" {
+    shape: hexagon
+  }
+  g_okta_jamf_helpdesk -> r_jamf_jamf_help_desk
+
+u_dave: "Dave" {
+  shape: oval
+}
+g_okta_crowdstrike_readonly: "okta-crowdstrike-readonly"
+  u_dave -> g_okta_crowdstrike_readonly
+  u_dave -> g_okta_jamf_helpdesk
+  u_dave -> g_okta_vpn_users
+  r_crowdstrike_crowdstrike_falcon_read_only: "crowdstrike: CrowdStrike Falcon Read Only" {
+    shape: hexagon
+  }
+  g_okta_crowdstrike_readonly -> r_crowdstrike_crowdstrike_falcon_read_only
+
+u_eve: "Eve" {
+  shape: oval
+}
+  u_eve -> g_okta_crowdstrike_admins
+
+u_frank: "Frank" {
+  shape: oval
+}
+  u_frank -> g_okta_crowdstrike_admins
+
+u_grace: "Grace" {
+  shape: oval
+}
+g_jamf_admins: "Jamf-Admins"
+  u_grace -> g_jamf_admins
+  u_grace -> g_okta_crowdstrike_admins
+  g_jamf_admins -> r_jamf_jamf_administrator
+
+u_heidi: "Heidi" {
+  shape: oval
+}
+  u_heidi -> g_okta_crowdstrike_readonly

@@ -1,0 +1,78 @@
+graph TD
+%% AccessGraph: user --> group --> system: role. Solid = direct membership, dotted = via nesting. Pink = admin role.
+classDef admin fill:#f9c,stroke:#c00,stroke-width:2px;
+    u_alice["Alice"]
+    g_okta_crowdstrike_admins["okta-crowdstrike-admins"]
+    u_alice --> g_okta_crowdstrike_admins
+    g_okta_jamf_admins["okta-jamf-admins"]
+    u_alice --> g_okta_jamf_admins
+    g_okta_okta_super_admins["okta-okta-super-admins"]
+    u_alice -. "nested" .-> g_okta_okta_super_admins
+    g_okta_vpn_users["okta-vpn-users"]
+    u_alice --> g_okta_vpn_users
+    r_crowdstrike_CrowdStrike_Falcon_Administrator["crowdstrike: CrowdStrike Falcon Administrator"]
+    g_okta_crowdstrike_admins --> r_crowdstrike_CrowdStrike_Falcon_Administrator
+    r_jamf_Jamf_Administrator["jamf: Jamf Administrator"]
+    g_okta_jamf_admins --> r_jamf_Jamf_Administrator
+    r_okta_Okta_Super_Administrator["okta: Okta Super Administrator"]
+    g_okta_okta_super_admins --> r_okta_Okta_Super_Administrator
+    u_bob["Bob"]
+    g_okta_jamf_admins["okta-jamf-admins"]
+    u_bob --> g_okta_jamf_admins
+    g_okta_okta_helpdesk["okta-okta-helpdesk"]
+    u_bob --> g_okta_okta_helpdesk
+    g_okta_okta_super_admins["okta-okta-super-admins"]
+    u_bob -. "nested" .-> g_okta_okta_super_admins
+    r_jamf_Jamf_Administrator["jamf: Jamf Administrator"]
+    g_okta_jamf_admins --> r_jamf_Jamf_Administrator
+    r_okta_Okta_Help_Desk_Administrator["okta: Okta Help Desk Administrator"]
+    g_okta_okta_helpdesk --> r_okta_Okta_Help_Desk_Administrator
+    r_okta_Okta_Super_Administrator["okta: Okta Super Administrator"]
+    g_okta_okta_super_admins --> r_okta_Okta_Super_Administrator
+    u_carol["Carol"]
+    g_okta_crowdstrike_admins["okta-crowdstrike-admins"]
+    u_carol --> g_okta_crowdstrike_admins
+    g_okta_jamf_helpdesk["okta-jamf-helpdesk"]
+    u_carol --> g_okta_jamf_helpdesk
+    r_crowdstrike_CrowdStrike_Falcon_Administrator["crowdstrike: CrowdStrike Falcon Administrator"]
+    g_okta_crowdstrike_admins --> r_crowdstrike_CrowdStrike_Falcon_Administrator
+    r_jamf_Jamf_Help_Desk["jamf: Jamf Help Desk"]
+    g_okta_jamf_helpdesk --> r_jamf_Jamf_Help_Desk
+    u_dave["Dave"]
+    g_okta_crowdstrike_readonly["okta-crowdstrike-readonly"]
+    u_dave --> g_okta_crowdstrike_readonly
+    g_okta_jamf_helpdesk["okta-jamf-helpdesk"]
+    u_dave --> g_okta_jamf_helpdesk
+    g_okta_vpn_users["okta-vpn-users"]
+    u_dave --> g_okta_vpn_users
+    r_crowdstrike_CrowdStrike_Falcon_Read_Only["crowdstrike: CrowdStrike Falcon Read Only"]
+    g_okta_crowdstrike_readonly --> r_crowdstrike_CrowdStrike_Falcon_Read_Only
+    r_jamf_Jamf_Help_Desk["jamf: Jamf Help Desk"]
+    g_okta_jamf_helpdesk --> r_jamf_Jamf_Help_Desk
+    u_eve["Eve"]
+    g_okta_crowdstrike_admins["okta-crowdstrike-admins"]
+    u_eve --> g_okta_crowdstrike_admins
+    r_crowdstrike_CrowdStrike_Falcon_Administrator["crowdstrike: CrowdStrike Falcon Administrator"]
+    g_okta_crowdstrike_admins --> r_crowdstrike_CrowdStrike_Falcon_Administrator
+    u_frank["Frank"]
+    g_okta_crowdstrike_admins["okta-crowdstrike-admins"]
+    u_frank --> g_okta_crowdstrike_admins
+    r_crowdstrike_CrowdStrike_Falcon_Administrator["crowdstrike: CrowdStrike Falcon Administrator"]
+    g_okta_crowdstrike_admins --> r_crowdstrike_CrowdStrike_Falcon_Administrator
+    u_grace["Grace"]
+    g_Jamf_Admins["Jamf-Admins"]
+    u_grace --> g_Jamf_Admins
+    g_okta_crowdstrike_admins["okta-crowdstrike-admins"]
+    u_grace --> g_okta_crowdstrike_admins
+    r_crowdstrike_CrowdStrike_Falcon_Administrator["crowdstrike: CrowdStrike Falcon Administrator"]
+    g_okta_crowdstrike_admins --> r_crowdstrike_CrowdStrike_Falcon_Administrator
+    r_jamf_Jamf_Administrator["jamf: Jamf Administrator"]
+    g_Jamf_Admins --> r_jamf_Jamf_Administrator
+    u_heidi["Heidi"]
+    g_okta_crowdstrike_readonly["okta-crowdstrike-readonly"]
+    u_heidi --> g_okta_crowdstrike_readonly
+    r_crowdstrike_CrowdStrike_Falcon_Read_Only["crowdstrike: CrowdStrike Falcon Read Only"]
+    g_okta_crowdstrike_readonly --> r_crowdstrike_CrowdStrike_Falcon_Read_Only
+    class r_crowdstrike_CrowdStrike_Falcon_Administrator admin;
+    class r_jamf_Jamf_Administrator admin;
+    class r_okta_Okta_Super_Administrator admin;

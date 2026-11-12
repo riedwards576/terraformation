@@ -85,7 +85,7 @@ when multiple teams administer different parts of Okta. AccessGraph does the aud
   regardless of the findings. An opt-in `--strict` mode exists
   (exit 1 on any warning) for teams that want the gate.
 
-Stdlib-only Python, 15 unit tests (`cd tools/accessgraph && python3 -m unittest test_accessgraph -v`),
+Stdlib-only Python, 30 unit tests (`cd tools/accessgraph && python3 -m unittest test_accessgraph -v`),
 no paid service, no server. The POC ships checked-in *example*
 snapshot and mapping files so it can be run with no accounts or
 credentials; in production, the snapshot comes from the Okta API
@@ -93,7 +93,12 @@ and the mapping is generated from the same Terraform code that
 creates the groups and role assignments — see
 `tools/accessgraph/README.md` for the wiring and the honest limits.
 It also supports auditing one user at a time (`--user alice`),
-the way an admin would start an audit.
+the way an admin would start an audit. It also renders the audit
+as a graph, two ways: `graph` produces a Mermaid flowchart for the
+PR comment, and `d2` produces a D2 diagram — the artifact for
+auditors, who get files from IT/Sec rather than reading PR comments.
+The PR workflow compiles the `.d2` to a styled SVG with the
+open-source D2 CLI (v0.9.0) and uploads both files with the report artifact.
 
 ## GhostChange
 
@@ -215,9 +220,9 @@ cd terraform/envs/dev && terraform init && terraform plan
 - Workflows are YAML only (not run here — they need a GitHub repo + AWS account; run the first PR to prove them).
 - PlanGuard: 9 unit tests pass; demo verified — unchanged plan verifies OK, tampered plan fails with exit 1.
 - CoverageGuard: 15 unit tests pass; demo verified — example pass plan exits 0, 10 uncovered Okta users (Okta MFA 98.0% → 91.9%) exits 1, disabling CrowdStrike uninstall protection exits 1, missing snapshot exits 2.
-- AccessGraph: 15 unit tests pass; demo verified on the checked-in examples — 8 users, 6 admin users, 11 warnings (Alice and Bob as Okta Super Admins only via nesting, a 5-person CrowdStrike admin group, 3 naming violations, an unmapped VPN group, a stale legacy admin group); default run exits 0, `--strict` exits 1, missing snapshot exits 2.
+- AccessGraph: 30 unit tests pass (15 audit + 7 Mermaid graph + 8 D2); demo verified on the checked-in examples — 8 users, 6 admin users, 11 warnings (Alice and Bob as Okta Super Admins only via nesting, a 5-person CrowdStrike admin group, 3 naming violations, an unmapped VPN group, a stale legacy admin group); default run exits 0, `--strict` exits 1, missing snapshot exits 2; `graph` renders the audit as a Mermaid flowchart (admin roles highlighted, nested edges dotted) and the checked-in `examples/access-graph.mmd` regenerates byte-for-byte; `d2` renders the same audit as a D2 diagram (admin roles pink, nested edges dashed, each node and edge defined once), the checked-in `examples/access-graph.d2` regenerates byte-for-byte, and rendering it was verified by hand with D2 v0.9.0 (SVG and PNG).
 - GhostChange: 15 unit tests pass; demo verified on the checked-in examples — 5 live, 5 desired, 3 ok, 1 drifted (uninstall protection turned off in the CrowdStrike console, critical), 1 unmanaged (Jamf profile made in the console), 1 missing (sensor policy deleted out of band); default run exits 0, `--strict` exits 1 on critical drift only, missing file exits 2.
-- Note: the POC was pushed to `riedwards576/terraformation` (private) on 2026-11-11 — all 35 original files verified in place, then CoverageGuard (8 new files) and the updated `terraform-pr.yml`, verified complete at 43 files, head `a2957fd9`, plus a README correction, head `d69ca50a`. AccessGraph (5 new files) pushed 2026-11-11, verified complete at 48 files, head `edf136d6`; Richard also uploaded the updated `terraform-pr.yml` himself ("Adding in AccessGraph tooling", `4e272fbc`) just before that push, and it matches local exactly. GhostChange (6 new files) is staged locally and not yet pushed.
+- Note: the POC was pushed to `riedwards576/terraformation` (private) on 2026-11-11 — all 35 original files verified in place, then CoverageGuard (8 new files) and the updated `terraform-pr.yml`, verified complete at 43 files, head `a2957fd9`, plus a README correction, head `d69ca50a`. AccessGraph (5 new files) pushed 2026-11-11, verified complete at 48 files, head `edf136d6`; Richard also uploaded the updated `terraform-pr.yml` himself ("Adding in AccessGraph tooling", `4e272fbc`) just before that push, and it matches local exactly. GhostChange (6 new files) pushed 2026-11-11, verified complete at 54 files, head `133b09b7`; Richard also uploaded the updated `terraform-pr.yml` himself ("Updated with GhostChange tooling", `938c7be7`) just before that push, and it matches local exactly. The AccessGraph graph exports (Mermaid + D2: updated `accessgraph.py`, tests, README, example `.mmd` and `.d2`, workflow) are staged locally and not yet pushed.
 
 ## Next steps when budget / scale grows
 1. **Infracost** (free tier) for real $ estimates on PRs, replacing `cost-check.sh`.
