@@ -39,7 +39,7 @@ no paid service, no server.
 
 ## CoverageGuard
 
-PlanGuard proves the *plan* didn't change. CoverageGuard judges the
+While PlanGuard proves the *plan* didn't change, CoverageGuard judges the
 *end state* — after this plan is applied, will fewer devices or users
 be protected than the floor we established?
 
