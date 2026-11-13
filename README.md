@@ -34,8 +34,6 @@ closes that time-of-check / time-of-use gap.
   S3 public-access disabled +50. HIGH / CRITICAL plans get a
   `needs-extra-review` label; prod already needs a human approver.
 
-Stdlib-only Python, 9 unit tests (`cd tools/planguard && python3 -m unittest test_planguard -v`),
-no paid service, no server.
 
 ## CoverageGuard
 
@@ -56,15 +54,6 @@ be protected than the floor we established?
   state worse. It does not care how the change was made, and it never
   blocks work for process reasons.
 
-Stdlib-only Python, 15 unit tests (`cd tools/coverageguard && python3 -m unittest test_coverageguard -v`),
-no paid service, no server. The POC ships a checked-in *example*
-snapshot so it can be run with no accounts or credentials; in
-production, a workflow step fetches a read-only snapshot from the
-CrowdStrike / Jamf / Okta APIs first — see `tools/coverageguard/README.md`
-for the wiring and the honest limits. With the current S3-only
-Terraform, no plan touches those systems, so CoverageGuard passes
-and stays out of the way until Jamf / Okta / CrowdStrike resources
-are added.
 
 ## AccessGraph
 
@@ -85,20 +74,6 @@ when multiple teams administer different parts of Okta. AccessGraph does the aud
   regardless of the findings. An opt-in `--strict` mode exists
   (exit 1 on any warning) for teams that want the gate.
 
-Stdlib-only Python, 30 unit tests (`cd tools/accessgraph && python3 -m unittest test_accessgraph -v`),
-no paid service, no server. The POC ships checked-in *example*
-snapshot and mapping files so it can be run with no accounts or
-credentials; in production, the snapshot comes from the Okta API
-and the mapping is generated from the same Terraform code that
-creates the groups and role assignments — see
-`tools/accessgraph/README.md` for the wiring and the honest limits.
-It also supports auditing one user at a time (`--user alice`),
-the way an admin would start an audit. It also renders the audit
-as a graph, two ways: `graph` produces a Mermaid flowchart for the
-PR comment, and `d2` produces a D2 diagram — the artifact for
-auditors, who get files from IT/Sec rather than reading PR comments.
-The PR workflow compiles the `.d2` to a styled SVG with the
-open-source D2 CLI (v0.9.0) and uploads both files with the report artifact.
 
 ## GhostChange
 
@@ -127,46 +102,6 @@ Terraform declares and lists what moved outside Terraform:
   regardless of the findings. An opt-in `--strict` mode exists
   (exit 1 only on critical drift) for teams that want the gate.
 
-Stdlib-only Python, 15 unit tests (`cd tools/ghostchange && python3 -m unittest test_ghostchange -v`),
-no paid service, no server. The POC ships checked-in *example*
-live and desired files so it can be run with no accounts or
-credentials; in production, the live snapshot comes from the
-Jamf / Okta / CrowdStrike APIs and the desired state is generated
-from the same Terraform code that manages the config — see
-`tools/ghostchange/README.md` for the wiring and the honest limits.
-
-| Concern | Choice | Cost |
-|---|---|---|
-| CI/CD | GitHub Actions (2,000 free min/mo private, unlimited public) | $0 |
-| IaC | Terraform 1.9.8 (OpenTofu is a drop-in if you prefer MPL) | $0 |
-| State | S3 + DynamoDB lock, encrypted + versioned | ~$0 at POC scale |
-| Auth | GitHub OIDC → AWS IAM, 3 least-privilege roles, no long-lived keys | $0 |
-| Lint | terraform fmt, validate, TFLint | $0 |
-| Security scan | Trivy (tfsec rules), Checkov, Gitleaks | $0 |
-| Policy as code | OPA / Conftest (Rego) — deny public S3, require tags/encryption/versioning | $0 |
-| Cost guardrail | `scripts/cost-check.sh` allowlist (swap for Infracost free tier later) | $0 |
-| Drift | Nightly `terraform plan`, GitHub issue on drift | $0 |
-
-**Total POC running cost: $0** — an empty S3 bucket + on-demand DynamoDB lock table. No EC2, no NAT gateway (the usual budget killer — don't add one in a POC).
-
-## Repo layout
-
-```
-.github/workflows/
-  terraform-pr.yml       PR: fmt/validate/tflint/plan + OPA, posts plan as comment
-  terraform-apply.yml    main: auto-apply dev; manual dispatch + approval for prod
-  security.yml           Trivy + Checkov + Gitleaks, SARIF to GitHub Security tab
-  drift-detection.yml    Nightly plan, opens an issue on drift
-bootstrap/               Creates the S3 state bucket + DynamoDB lock table (run once)
-terraform/
-  modules/s3-secure/     Reusable secure bucket (encryption, versioning, public-access block)
-  envs/dev/  envs/prod/  Thin env wrappers — same module, different vars/state
-policy/                  OPA Rego: S3 public-access, versioning, required tags
-scripts/
-  bootstrap.sh           One-command bootstrap
-  oidc-setup.md          GitHub OIDC → AWS roles, step by step
-  cost-check.sh          Fails a plan that creates non-allowlisted resource types
-```
 
 ## Quick start (30 min)
 
@@ -203,7 +138,7 @@ terraform fmt -recursive
 cd terraform/envs/dev && terraform init && terraform plan
 ```
 
-## Security model (for a security reviewer)
+## Security model (for a security audience)
 
 - **No long-lived credentials anywhere in CI.** OIDC short-lived tokens, scoped by repo/branch/environment in the trust policy. A leaked token can't apply prod.
 - **Separation of duties:** 3 roles — read-only (PR), dev-apply, prod-apply. Dev role can't touch prod state or resources. Prod needs a human reviewer in GitHub Environments.
@@ -224,12 +159,6 @@ cd terraform/envs/dev && terraform init && terraform plan
 - GhostChange: 15 unit tests pass; demo verified on the checked-in examples — 5 live, 5 desired, 3 ok, 1 drifted (uninstall protection turned off in the CrowdStrike console, critical), 1 unmanaged (Jamf profile made in the console), 1 missing (sensor policy deleted out of band); default run exits 0, `--strict` exits 1 on critical drift only, missing file exits 2.
 - Note: the POC was pushed to `riedwards576/terraformation` (private) on 2026-11-11 — all 35 original files verified in place, then CoverageGuard (8 new files) and the updated `terraform-pr.yml`, verified complete at 43 files, head `a2957fd9`, plus a README correction, head `d69ca50a`. AccessGraph (5 new files) pushed 2026-11-11, verified complete at 48 files, head `edf136d6`; Richard also uploaded the updated `terraform-pr.yml` himself ("Adding in AccessGraph tooling", `4e272fbc`) just before that push, and it matches local exactly. GhostChange (6 new files) pushed 2026-11-11, verified complete at 54 files, head `133b09b7`; Richard also uploaded the updated `terraform-pr.yml` himself ("Updated with GhostChange tooling", `938c7be7`) just before that push, and it matches local exactly. The AccessGraph graph exports (Mermaid + D2: updated `accessgraph.py`, tests, README, example `.mmd` and `.d2`, workflow) are staged locally and not yet pushed.
 
-## Next steps when budget / scale grows
-1. **Infracost** (free tier) for real $ estimates on PRs, replacing `cost-check.sh`.
-2. **Atlantis or Spacelift** if you want plan/apply *inside* PR comments with locking — still open-source / free tier, but adds a server to run.
-3. **Separate AWS accounts** per env (dev/prod) instead of separate roles in one account.
-4. **KMS CMK + CloudTrail + GuardDuty** once you hold customer data.
-5. **OpenTofu** if HashiCorp licensing matters to you — workflows change by one action name.
 
 ## Items to consider in the next version of Terraform pipeline:
 - Increase usability to Azure/GCP. The pipeline shape is identical, only the provider + OIDC setup changes.
